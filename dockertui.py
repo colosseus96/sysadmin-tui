@@ -576,9 +576,12 @@ def show_services():
 
 def live_monitor():
     """Live monitoring with process details, Docker containers, and 'q' to quit."""
+    clear()
+    console.print(f"[{DIM}]Live monitor — press 'q' to go back to main menu[/]\n")
+    
+    # Get initial key state
     import tty
     import termios
-    import select
     
     def get_key():
         """Get a single keystroke without waiting for Enter."""
@@ -591,19 +594,16 @@ def live_monitor():
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
         return ch
     
-    console.print(f"[{DIM}]Live monitor — press 'q' to go back to main menu[/]\n")
+    # Non-blocking check setup
+    import select
     
     try:
         while True:
-            # Check for 'q' key press (non-blocking)
-            if select.select([sys.stdin], [], [], 0)[0]:
+            # Check for 'q' key press
+            if select.select([sys.stdin], [], [], 0.1)[0]:
                 ch = sys.stdin.read(1)
-                if ch and ch.lower() == 'q':
+                if ch.lower() == 'q':
                     break
-            
-            # Clear screen for fresh update
-            clear()
-            console.print(f"[{DIM}]Live monitor — press 'q' to go back to main menu[/]\n")
             
             # Gather system stats
             mem = psutil.virtual_memory()
@@ -708,6 +708,7 @@ def live_monitor():
                 docker_table.add_row("", "", "", "", "")
             
             # Combine into layout
+            from rich.layout import Layout
             layout = Layout()
             layout.split_column(
                 Layout(Panel(sys_table, title=f"[{TITLE_STYLE}] System Overview", border_style=ACCENT), size=10),
@@ -718,8 +719,9 @@ def live_monitor():
             
             console.print(layout)
             
-            # Short delay before checking for input again
-            time.sleep(0.5)
+            # Move cursor up and wait
+            from rich.cursor import hide_cursor
+            time.sleep(0.8)
             
     except KeyboardInterrupt:
         pass
