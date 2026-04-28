@@ -138,6 +138,12 @@ def bytes_to_human(n):
         n /= 1024
     return f"{n:.1f} PB"
 
+# ─── HELPERS ──────────────────────────────────────────────────────────────────
+
+def input_pause():
+    console.print(f"[{DIM}]Press Enter to return to menu...[/]")
+    input()
+
 # ─── SYSTEM OVERVIEW ──────────────────────────────────────────────────────────
 
 def show_system_overview():
@@ -438,9 +444,9 @@ def docker_prune():
 
     for k, (label, _) in options.items():
         color = DANGER if k == "6" else WARN if k == "5" else ACCENT
-        console.print(f"  [{color}][{k}][/] {label}")
+        console.print(f"  [{color}][[{k}]][/] {label}")
 
-    console.print(f"  [{DIM}][0][/] Back\n")
+    console.print(f"  [{DIM}][[0]][/] Back\n")
     choice = Prompt.ask("Select", choices=["0","1","2","3","4","5","6"])
 
     if choice == "0":
@@ -508,17 +514,17 @@ def docker_control():
 
     console.print(f"\nContainer: [{ACCENT}]{container}[/]\n")
     if is_running:
-        console.print(f"  [{SUCCESS}][1][/] Stop")
-        console.print(f"  [{WARN}][2][/] Restart")
-        console.print(f"  [{ACCENT}][3][/] View logs (last 50 lines)")
-        console.print(f"  [{DIM}][0][/] Back\n")
+        console.print(f"  [{SUCCESS}][[1]][/] Stop")
+        console.print(f"  [{WARN}][[2]][/] Restart")
+        console.print(f"  [{ACCENT}][[3]][/] View logs (last 50 lines)")
+        console.print(f"  [{DIM}][[0]][/] Back\n")
         action = Prompt.ask("Action", choices=["0","1","2","3"])
         cmds = {"1": rt(f"stop {container}"), "2": rt(f"restart {container}"), "3": rt(f"logs --tail 50 {container}")}
     else:
-        console.print(f"  [{SUCCESS}][1][/] Start")
-        console.print(f"  [{DANGER}][2][/] Remove container")
-        console.print(f"  [{ACCENT}][3][/] View logs (last 50 lines)")
-        console.print(f"  [{DIM}][0][/] Back\n")
+        console.print(f"  [{SUCCESS}][[1]][/] Start")
+        console.print(f"  [{DANGER}][[2]][/] Remove container")
+        console.print(f"  [{ACCENT}][[3]][/] View logs (last 50 lines)")
+        console.print(f"  [{DIM}][[0]][/] Back\n")
         action = Prompt.ask("Action", choices=["0","1","2","3"])
         cmds = {"1": rt(f"start {container}"), "2": rt(f"rm {container}"), "3": rt(f"logs --tail 50 {container}")}
 
@@ -855,20 +861,21 @@ def remove_caddy_block(content, domain_to_remove):
     return "".join(new_lines)
 
 def manage_caddy():
-    clear()
-    print_banner()
-    console.print(Rule(f"[{TITLE_STYLE}]  Caddy Reverse Proxy Manager"))
-    console.print()
-
     if not caddy_is_installed():
+        clear()
+        print_banner()
+        console.print(Rule(f"[{TITLE_STYLE}]  Caddy Reverse Proxy Manager"))
+        console.print()
         console.print(f"[{DANGER}]Caddy is not installed or not in PATH.[/]")
         console.print(f"[{DIM}]Install: sudo dnf install caddy  (Fedora)  |  sudo apt install caddy  (Debian/Ubuntu)[/]")
         input_pause()
         return
 
-    console.print(f"[{SUCCESS}]✔ Caddy:[/] [{DIM}]{shutil.which(CADDY_BINARY)}[/]")
-
     if not caddyfile_exists():
+        clear()
+        print_banner()
+        console.print(Rule(f"[{TITLE_STYLE}]  Caddy Reverse Proxy Manager"))
+        console.print()
         console.print(f"[{WARN}]Caddyfile not found at {CADDYFILE_PATH}[/]")
         create = Confirm.ask("Create a new empty Caddyfile?")
         if not create:
@@ -882,15 +889,22 @@ def manage_caddy():
             console.print(f"[{DANGER}]Failed to create Caddyfile. Try running with sudo.[/]")
             input_pause()
             return
-    else:
-        console.print(f"[{SUCCESS}]✔ Caddyfile:[/] [{DIM}]{CADDYFILE_PATH}[/]\n")
 
     while True:
-        console.print(f"  [{ACCENT}][1][/]  View current entries")
-        console.print(f"  [{SUCCESS}][2][/]  Add new reverse proxy entry")
-        console.print(f"  [{DANGER}][3][/]  Remove an entry")
-        console.print(f"  [{WARN}][4][/]  Reload Caddy")
-        console.print(f"  [{DIM}][0][/]  Back\n")
+        clear()
+        print_banner()
+        console.print(Rule(f"[{TITLE_STYLE}]  Caddy Reverse Proxy Manager"))
+        console.print()
+        console.print(
+            f"[{SUCCESS}]✔ Caddy:[/] [{DIM}]{shutil.which(CADDY_BINARY)}[/]"
+            f"  [{SUCCESS}]✔ Caddyfile:[/] [{DIM}]{CADDYFILE_PATH}[/]\n"
+        )
+
+        console.print(f"  [{ACCENT}][[1]][/]  View current entries")
+        console.print(f"  [{SUCCESS}][[2]][/]  Add new reverse proxy entry")
+        console.print(f"  [{DANGER}][[3]][/]  Remove an entry")
+        console.print(f"  [{WARN}][[4]][/]  Reload Caddy")
+        console.print(f"  [{DIM}][[0]][/]  Back\n")
         choice = Prompt.ask("Select", choices=["0","1","2","3","4"])
 
         if choice == "0":
@@ -1020,18 +1034,6 @@ def manage_caddy():
             console.print()
             input_pause()
 
-        clear()
-        print_banner()
-        console.print(Rule(f"[{TITLE_STYLE}]  Caddy Reverse Proxy Manager"))
-        console.print()
-        console.print(f"[{SUCCESS}]✔ Caddy found[/]  [{SUCCESS}]✔ Caddyfile: {CADDYFILE_PATH}[/]\n")
-
-# ─── HELPERS ──────────────────────────────────────────────────────────────────
-
-def input_pause():
-    console.print(f"[{DIM}]Press Enter to return to menu...[/]")
-    input()
-
 # ─── MAIN MENU ────────────────────────────────────────────────────────────────
 
 def main():
@@ -1061,10 +1063,15 @@ def main():
 
         for key, label, desc, color in menu:
             desc_part = f"[{DIM}]— {desc}[/]" if desc else ""
-            console.print(f"  [{color}][{key}][/]  [bold]{label}[/]  {desc_part}")
+            console.print(f"  [{color}][[{key}]][/]  [bold]{label}[/]  {desc_part}")
 
         console.print()
-        choice = Prompt.ask(f"[{ACCENT}]Enter selection[/]", choices=[m[0] for m in menu], show_choices=False).strip().lower()
+        valid = {m[0] for m in menu}
+        while True:
+            choice = Prompt.ask(f"[{ACCENT}]Enter selection[/]", show_choices=False).strip().lower()
+            if choice in valid:
+                break
+            console.print(f"[{DANGER}]Invalid choice. Please try again.[/]")
 
         actions = {
             "1": show_system_overview,
