@@ -1064,7 +1064,7 @@ def main():
             console.print(f"  [{color}][{key}][/]  [bold]{label}[/]  {desc_part}")
 
         console.print()
-        choice = Prompt.ask(f"[{ACCENT}]Enter selection[/]", choices=[m[0] for m in menu], show_choices=False)
+        choice = Prompt.ask(f"[{ACCENT}]Enter selection[/]", choices=[m[0] for m in menu], show_choices=False).strip().lower()
 
         actions = {
             "1": show_system_overview,
@@ -1080,7 +1080,8 @@ def main():
             "0": lambda: sys.exit(0),
         }
 
-        actions[choice]()
+        if choice in actions:
+            actions[choice]()
 
 if __name__ == "__main__":
     main()
