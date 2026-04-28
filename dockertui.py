@@ -2,6 +2,7 @@
 """
 dockertui - A TUI sysadmin dashboard for Docker/Podman and system monitoring
 Requirements: pip install rich psutil
+             Or run: ./install.sh
 """
 
 import subprocess
@@ -28,7 +29,13 @@ try:
     from rich.rule import Rule
     from rich.style import Style
 except ImportError:
-    print("Missing dependencies. Run: pip install rich psutil")
+    print("Missing dependencies!")
+    print("\nOption 1: Run the install script:")
+    print("  ./install.sh")
+    print("\nOption 2: Install manually:")
+    print("  pip install rich psutil")
+    print("\nOption 3: Use requirements.txt:")
+    print("  pip install -r requirements.txt\n")
     sys.exit(1)
 
 console = Console()
@@ -568,32 +575,157 @@ def show_services():
 # ─── LIVE MONITOR ─────────────────────────────────────────────────────────────
 
 def live_monitor():
-    clear()
-    console.print(f"[{DIM}]Live monitor — press Ctrl+C to stop[/]\n")
+    """Live monitoring with process details, Docker containers, and 'q' to quit."""
+    import tty
+    import termios
+    import select
+    
+    def get_key():
+        """Get a single keystroke without waiting for Enter."""
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            ch = sys.stdin.read(1)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        return ch
+    
+    console.print(f"[{DIM}]Live monitor — press 'q' to go back to main menu[/]\n")
+    
     try:
-        with Live(refresh_per_second=1, screen=True) as live:
-            while True:
-                mem = psutil.virtual_memory()
-                cpu = psutil.cpu_percent(interval=None)
-                swap = psutil.swap_memory()
-
-                layout = Table(box=box.ROUNDED, border_style=ACCENT, expand=True, show_header=False)
-                layout.add_column("Metric", style="bold", width=20)
-                layout.add_column("Value")
-
-                cpu_color = DANGER if cpu > 80 else WARN if cpu > 50 else SUCCESS
-                ram_color = DANGER if mem.percent > 85 else WARN if mem.percent > 60 else SUCCESS
-
-                layout.add_row("CPU", f"[{cpu_color}]{cpu:.1f}%[/]")
-                layout.add_row("RAM Used", f"[{ram_color}]{bytes_to_human(mem.used)} / {bytes_to_human(mem.total)} ({mem.percent:.1f}%)[/]")
-                layout.add_row("RAM Free", f"[{SUCCESS}]{bytes_to_human(mem.available)}[/]")
-                layout.add_row("Swap", f"[{WARN}]{bytes_to_human(swap.used)} / {bytes_to_human(swap.total)}[/]")
-                layout.add_row("Updated", f"[{DIM}]{datetime.now().strftime('%H:%M:%S')}[/]")
-
-                live.update(Panel(layout, title=f"[{TITLE_STYLE}] Live Monitor", border_style=ACCENT))
-                time.sleep(1)
+        while True:
+            # Check for 'q' key press (non-blocking)
+            if select.select([sys.stdin], [], [], 0)[0]:
+                ch = sys.stdin.read(1)
+                if ch and ch.lower() == 'q':
+                    break
+            
+            # Clear screen for fresh update
+            clear()
+            console.print(f"[{DIM}]Live monitor — press 'q' to go back to main menu[/]\n")
+            
+            # Gather system stats
+            mem = psutil.virtual_memory()
+            cpu = psutil.cpu_percent(interval=0.3)
+            swap = psutil.swap_memory()
+            
+            # Get top 8 processes by RAM
+            top_procs = []
+            for p in psutil.process_iter(['pid', 'name', 'username', 'memory_info', 'cpu_percent', 'status']):
+                try:
+                    info = p.info
+                    if info['memory_info']:
+                        top_procs.append(info)
+                except Exception:
+                    pass
+            top_procs.sort(key=lambda x: x['memory_info'].rss if x['memory_info'] else 0, reverse=True)
+            top_procs = top_procs[:8]
+            
+            # Get Docker container stats if available
+            docker_stats = []
+            if RUNTIME == "docker":
+                raw = run("docker stats --no-stream --format '{{json .}}'", capture=True)
+                if raw:
+                    for line in raw.splitlines():
+                        try:
+                            s = json.loads(line)
+                            docker_stats.append(s)
+                        except Exception:
+                            pass
+            
+            # Build the display
+            cpu_color = DANGER if cpu > 80 else WARN if cpu > 50 else SUCCESS
+            ram_color = DANGER if mem.percent > 85 else WARN if mem.percent > 60 else SUCCESS
+            
+            # System overview panel
+            sys_table = Table(box=box.ROUNDED, border_style=ACCENT, expand=True, show_header=False)
+            sys_table.add_column("Metric", style="bold", width=18)
+            sys_table.add_column("Value")
+            
+            sys_table.add_row("CPU", f"[{cpu_color}]{cpu:.1f}%[/]")
+            sys_table.add_row("RAM Used", f"[{ram_color}]{bytes_to_human(mem.used)} / {bytes_to_human(mem.total)} ({mem.percent:.1f}%)[/]")
+            sys_table.add_row("RAM Free", f"[{SUCCESS}]{bytes_to_human(mem.available)}[/]")
+            sys_table.add_row("Swap", f"[{WARN}]{bytes_to_human(swap.used)} / {bytes_to_human(swap.total)}[/]")
+            sys_table.add_row("Updated", f"[{DIM}]{datetime.now().strftime('%H:%M:%S')}[/]")
+            
+            # Process table
+            proc_table = Table(box=box.ROUNDED, border_style=SUCCESS, expand=True, title=f"[{TITLE_STYLE}] Top Processes (by RAM)", title_style=f"bold {SUCCESS}")
+            proc_table.add_column("PID", style="dim", width=6)
+            proc_table.add_column("Name", style="bold", width=20)
+            proc_table.add_column("User", style=DIM, width=12)
+            proc_table.add_column("RAM", justify="right", style=WARN, width=10)
+            proc_table.add_column("CPU%", justify="right", style=ACCENT, width=7)
+            proc_table.add_column("Status", justify="center", width=10)
+            
+            for p in top_procs:
+                mem_info = p['memory_info']
+                ram = bytes_to_human(mem_info.rss) if mem_info else "N/A"
+                status = p['status'] or "?"
+                status_color = SUCCESS if status == "running" else DIM
+                proc_table.add_row(
+                    str(p['pid']),
+                    (p['name'] or "?")[:20],
+                    (p['username'] or "?")[:12],
+                    ram,
+                    f"{p['cpu_percent']:.1f}",
+                    f"[{status_color}]{status}[/]"
+                )
+            
+            # Docker containers panel
+            docker_title = f"[{TITLE_STYLE}] Docker Containers (Live)" if docker_stats else f"[{TITLE_STYLE}] Docker Containers (none running)"
+            docker_table = Table(box=box.ROUNDED, border_style="blue", expand=True, title=docker_title, title_style=f"bold blue")
+            docker_table.add_column("Container", style="bold", width=20)
+            docker_table.add_column("CPU%", justify="right", style=ACCENT, width=7)
+            docker_table.add_column("RAM", justify="right", style=WARN, width=10)
+            docker_table.add_column("RAM%", justify="right", width=7)
+            docker_table.add_column("Net I/O", style=DIM, width=15)
+            
+            if docker_stats:
+                for s in docker_stats:
+                    name = s.get("Name", "?")[:20]
+                    cpu_pct = s.get("CPUPerc", "0%")
+                    mem_usage = s.get("MemUsage", "? / ?")
+                    mem_perc = s.get("MemPerc", "0%")
+                    net_io = s.get("NetIO", "?")
+                    
+                    # Parse mem_usage to get just the used amount
+                    mem_used = mem_usage.split("/")[0].strip() if "/" in mem_usage else mem_usage
+                    
+                    cpu_val = float(cpu_pct.replace("%", "")) if "%" in cpu_pct else 0
+                    cpu_c = DANGER if cpu_val > 80 else WARN if cpu_val > 40 else ACCENT
+                    mem_pct_val = float(mem_perc.replace("%", "")) if "%" in mem_perc else 0
+                    mem_c = DANGER if mem_pct_val > 80 else WARN if mem_pct_val > 50 else SUCCESS
+                    
+                    docker_table.add_row(
+                        name,
+                        f"[{cpu_c}]{cpu_pct}[/]",
+                        f"[{mem_c}]{mem_used}[/]",
+                        f"[{mem_c}]{mem_perc}[/]",
+                        net_io[:15] if len(net_io) > 15 else net_io
+                    )
+            else:
+                docker_table.add_row("", "", "", "", "")
+            
+            # Combine into layout
+            layout = Layout()
+            layout.split_column(
+                Layout(Panel(sys_table, title=f"[{TITLE_STYLE}] System Overview", border_style=ACCENT), size=10),
+                Layout(proc_table, ratio=2),
+                Layout(docker_table, ratio=2),
+                Layout(Panel(f"[{DIM}]Press [bold]q[/] to return to main menu[/]", box=box.SIMPLE), size=3)
+            )
+            
+            console.print(layout)
+            
+            # Short delay before checking for input again
+            time.sleep(0.5)
+            
     except KeyboardInterrupt:
         pass
+    except Exception as e:
+        console.print(f"[{DANGER}]Error: {e}[/]")
+        input_pause()
 
 
 # ─── CADDY MANAGER ────────────────────────────────────────────────────────────
@@ -903,7 +1035,7 @@ def main():
             console.print(f"  [{color}][{key}][/]  [bold]{label}[/]  {desc_part}")
 
         console.print()
-        choice = Prompt.ask(f"[{ACCENT}]Enter selection[/]", choices=[m[0] for m in menu], show_choices=False)
+        choice = Prompt.ask(f"[{ACCENT}]Enter selection[/]", choices=[m[0] for m in menu], show_choices=False).strip().lower()
 
         actions = {
             "1": show_system_overview,
@@ -919,7 +1051,8 @@ def main():
             "0": lambda: sys.exit(0),
         }
 
-        actions[choice]()
+        if choice in actions:
+            actions[choice]()
 
 if __name__ == "__main__":
     main()
