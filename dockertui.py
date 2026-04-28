@@ -47,6 +47,9 @@ SUCCESS = "green"
 DIM = "dim"
 TITLE_STYLE = f"bold {ACCENT}"
 
+LIVE_REFRESH_RATE = 1
+LIVE_INPUT_TIMEOUT = 0.7
+CTRL_C = '\x03'
 BANNER = r"""
  ____             _             _____ _   _ ___ 
 |  _ \  ___   ___| | _____ _ __|_   _| | | |_ _|
@@ -736,11 +739,11 @@ def live_monitor():
     old_settings = termios.tcgetattr(fd)
     try:
         tty.setraw(fd)
-        with Live(build_layout(), screen=True, refresh_per_second=1) as live:
+        with Live(build_layout(), screen=True, refresh_per_second=LIVE_REFRESH_RATE) as live:
             while True:
-                if select.select([sys.stdin], [], [], 0.7)[0]:
+                if select.select([sys.stdin], [], [], LIVE_INPUT_TIMEOUT)[0]:
                     ch = sys.stdin.read(1)
-                    if ch.lower() in ('q', '\x03'):
+                    if ch.lower() in ('q', CTRL_C):
                         break
                 live.update(build_layout())
     except KeyboardInterrupt:
