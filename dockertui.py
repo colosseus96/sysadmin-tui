@@ -47,6 +47,9 @@ SUCCESS = "green"
 DIM = "dim"
 TITLE_STYLE = f"bold {ACCENT}"
 
+LIVE_REFRESH_RATE = 1
+LIVE_INPUT_TIMEOUT = 0.7
+CTRL_C = '\x03'
 BANNER = r"""
  ____             _             _____ _   _ ___ 
 |  _ \  ___   ___| | _____ _ __|_   _| | | |_ _|
@@ -213,7 +216,11 @@ def show_system_overview():
     days = int(uptime_seconds // 86400)
     hours = int((uptime_seconds % 86400) // 3600)
     mins = int((uptime_seconds % 3600) // 60)
-    console.print(f"\n[{DIM}]  Uptime:[/] [{SUCCESS}]{days}d {hours}h {mins}m[/]   [{DIM}]Load avg:[/] [{ACCENT}]{' '.join([str(round(x,2)) for x in os.getloadavg()])}[/]\n")
+    try:
+        load_avg = ' '.join([str(round(x, 2)) for x in os.getloadavg()])
+    except AttributeError:
+        load_avg = "N/A"
+    console.print(f"\n[{DIM}]  Uptime:[/] [{SUCCESS}]{days}d {hours}h {mins}m[/]   [{DIM}]Load avg:[/] [{ACCENT}]{load_avg}[/]\n")
 
     input_pause()
 
@@ -252,7 +259,7 @@ def show_top_processes():
             p['name'] or "?",
             p['username'] or "?",
             ram,
-            f"{p['cpu_percent']:.1f}",
+            f"{p.get('cpu_percent') or 0.0:.1f}",
             f"[{status_color}]{status}[/]"
         )
 
@@ -264,12 +271,18 @@ def show_top_processes():
 def show_docker_status():
     clear()
     print_banner()
-    console.print(Rule(f"[{TITLE_STYLE}]  Docker Container Status"))
+    rt_label = RUNTIME_LABEL or "Container"
+    console.print(Rule(f"[{TITLE_STYLE}]  {rt_label} Container Status"))
     console.print()
 
-    raw = run("docker ps -a --format '{{json .}}'")
+    if not check_runtime():
+        console.print(f"[{WARN}]No container runtime available.[/]")
+        input_pause()
+        return
+
+    raw = run(rt("ps -a --format '{{json .}}'"))
     if not raw:
-        console.print(f"[{DANGER}]No Docker output — is Docker running?[/]")
+        console.print(f"[{DANGER}]No {rt_label} output — is the daemon running?[/]")
         input_pause()
         return
 
@@ -328,11 +341,18 @@ def show_docker_status():
 def show_docker_stats():
     clear()
     print_banner()
-    console.print(Rule(f"[{TITLE_STYLE}]  Docker Resource Usage"))
+    rt_label = RUNTIME_LABEL or "Container"
+    console.print(Rule(f"[{TITLE_STYLE}]  {rt_label} Resource Usage"))
     console.print()
+
+    if not check_runtime():
+        console.print(f"[{WARN}]No container runtime available.[/]")
+        input_pause()
+        return
+
     console.print(f"[{DIM}]Fetching stats (may take a moment)...[/]\n")
 
-    raw = run("docker stats --no-stream --format '{{json .}}'")
+    raw = run(rt("stats --no-stream --format '{{json .}}'"))
     if not raw:
         console.print(f"[{DANGER}]No stats available.[/]")
         input_pause()
@@ -345,7 +365,7 @@ def show_docker_stats():
         except Exception:
             pass
 
-    stats.sort(key=lambda x: x.get("MemPerc", "0%").replace("%", ""), reverse=True)
+    stats.sort(key=lambda x: float(x.get("MemPerc", "0%").replace("%", "") or 0), reverse=True)
 
     table = Table(box=box.ROUNDED, border_style=ACCENT, expand=True)
     table.add_column("Container", style="bold")
@@ -390,7 +410,7 @@ def show_docker_stats():
         )
 
     console.print(table)
-    console.print(f"\n[{DIM}]Total RAM consumed by Docker:[/] [{WARN}]{total_mem_pct:.1f}% of host[/]\n")
+    console.print(f"\n[{DIM}]Total RAM consumed by {rt_label}:[/] [{WARN}]{total_mem_pct:.1f}% of host[/]\n")
     input_pause()
 
 # ─── DOCKER PRUNE ─────────────────────────────────────────────────────────────
@@ -398,16 +418,22 @@ def show_docker_stats():
 def docker_prune():
     clear()
     print_banner()
-    console.print(Rule(f"[{TITLE_STYLE}]  Docker Cleanup"))
+    rt_label = RUNTIME_LABEL or "Container"
+    console.print(Rule(f"[{TITLE_STYLE}]  {rt_label} Cleanup"))
     console.print()
 
+    if not check_runtime():
+        console.print(f"[{WARN}]No container runtime available.[/]")
+        input_pause()
+        return
+
     options = {
-        "1": ("Stopped containers only", "docker container prune -f"),
-        "2": ("Unused images only", "docker image prune -af"),
-        "3": ("Unused volumes only", "docker volume prune -f"),
-        "4": ("Unused networks only", "docker network prune -f"),
-        "5": ("Everything (containers, images, networks)", "docker system prune -af"),
-        "6": ("EVERYTHING including volumes ⚠️", "docker system prune -af --volumes"),
+        "1": ("Stopped containers only", rt("container prune -f")),
+        "2": ("Unused images only", rt("image prune -af")),
+        "3": ("Unused volumes only", rt("volume prune -f")),
+        "4": ("Unused networks only", rt("network prune -f")),
+        "5": ("Everything (containers, images, networks)", rt("system prune -af")),
+        "6": ("EVERYTHING including volumes ⚠️", rt("system prune -af --volumes")),
     }
 
     for k, (label, _) in options.items():
@@ -438,10 +464,16 @@ def docker_prune():
 def docker_control():
     clear()
     print_banner()
-    console.print(Rule(f"[{TITLE_STYLE}]  Docker Container Control"))
+    rt_label = RUNTIME_LABEL or "Container"
+    console.print(Rule(f"[{TITLE_STYLE}]  {rt_label} Container Control"))
     console.print()
 
-    raw = run("docker ps -a --format '{{.Names}}\t{{.Status}}'")
+    if not check_runtime():
+        console.print(f"[{WARN}]No container runtime available.[/]")
+        input_pause()
+        return
+
+    raw = run(rt("ps -a --format '{{.Names}}\t{{.Status}}'"))
     if not raw:
         console.print(f"[{DANGER}]No containers found.[/]")
         input_pause()
@@ -481,14 +513,14 @@ def docker_control():
         console.print(f"  [{ACCENT}][3][/] View logs (last 50 lines)")
         console.print(f"  [{DIM}][0][/] Back\n")
         action = Prompt.ask("Action", choices=["0","1","2","3"])
-        cmds = {"1": f"docker stop {container}", "2": f"docker restart {container}", "3": f"docker logs --tail 50 {container}"}
+        cmds = {"1": rt(f"stop {container}"), "2": rt(f"restart {container}"), "3": rt(f"logs --tail 50 {container}")}
     else:
         console.print(f"  [{SUCCESS}][1][/] Start")
         console.print(f"  [{DANGER}][2][/] Remove container")
         console.print(f"  [{ACCENT}][3][/] View logs (last 50 lines)")
         console.print(f"  [{DIM}][0][/] Back\n")
         action = Prompt.ask("Action", choices=["0","1","2","3"])
-        cmds = {"1": f"docker start {container}", "2": f"docker rm {container}", "3": f"docker logs --tail 50 {container}"}
+        cmds = {"1": rt(f"start {container}"), "2": rt(f"rm {container}"), "3": rt(f"logs --tail 50 {container}")}
 
     if action == "0":
         return
@@ -575,159 +607,152 @@ def show_services():
 # ─── LIVE MONITOR ─────────────────────────────────────────────────────────────
 
 def live_monitor():
-    """Live monitoring with process details, Docker containers, and 'q' to quit."""
-    clear()
-    console.print(f"[{DIM}]Live monitor — press 'q' to go back to main menu[/]\n")
-    
-    # Get initial key state
+    """Live monitoring with process details, container stats, and 'q' to quit."""
     import tty
     import termios
-    
-    def get_key():
-        """Get a single keystroke without waiting for Enter."""
-        fd = sys.stdin.fileno()
-        old_settings = termios.tcgetattr(fd)
-        try:
-            tty.setraw(fd)
-            ch = sys.stdin.read(1)
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-        return ch
-    
-    # Non-blocking check setup
     import select
-    
-    try:
-        while True:
-            # Check for 'q' key press
-            if select.select([sys.stdin], [], [], 0.1)[0]:
-                ch = sys.stdin.read(1)
-                if ch.lower() == 'q':
-                    break
-            
-            # Gather system stats
-            mem = psutil.virtual_memory()
-            cpu = psutil.cpu_percent(interval=0.3)
-            swap = psutil.swap_memory()
-            
-            # Get top 8 processes by RAM
-            top_procs = []
-            for p in psutil.process_iter(['pid', 'name', 'username', 'memory_info', 'cpu_percent', 'status']):
-                try:
-                    info = p.info
-                    if info['memory_info']:
-                        top_procs.append(info)
-                except Exception:
-                    pass
-            top_procs.sort(key=lambda x: x['memory_info'].rss if x['memory_info'] else 0, reverse=True)
-            top_procs = top_procs[:8]
-            
-            # Get Docker container stats if available
-            docker_stats = []
-            if RUNTIME == "docker":
-                raw = run("docker stats --no-stream --format '{{json .}}'", capture=True)
-                if raw:
-                    for line in raw.splitlines():
-                        try:
-                            s = json.loads(line)
-                            docker_stats.append(s)
-                        except Exception:
-                            pass
-            
-            # Build the display
-            cpu_color = DANGER if cpu > 80 else WARN if cpu > 50 else SUCCESS
-            ram_color = DANGER if mem.percent > 85 else WARN if mem.percent > 60 else SUCCESS
-            
-            # System overview panel
-            sys_table = Table(box=box.ROUNDED, border_style=ACCENT, expand=True, show_header=False)
-            sys_table.add_column("Metric", style="bold", width=18)
-            sys_table.add_column("Value")
-            
-            sys_table.add_row("CPU", f"[{cpu_color}]{cpu:.1f}%[/]")
-            sys_table.add_row("RAM Used", f"[{ram_color}]{bytes_to_human(mem.used)} / {bytes_to_human(mem.total)} ({mem.percent:.1f}%)[/]")
-            sys_table.add_row("RAM Free", f"[{SUCCESS}]{bytes_to_human(mem.available)}[/]")
-            sys_table.add_row("Swap", f"[{WARN}]{bytes_to_human(swap.used)} / {bytes_to_human(swap.total)}[/]")
-            sys_table.add_row("Updated", f"[{DIM}]{datetime.now().strftime('%H:%M:%S')}[/]")
-            
-            # Process table
-            proc_table = Table(box=box.ROUNDED, border_style=SUCCESS, expand=True, title=f"[{TITLE_STYLE}] Top Processes (by RAM)", title_style=f"bold {SUCCESS}")
-            proc_table.add_column("PID", style="dim", width=6)
-            proc_table.add_column("Name", style="bold", width=20)
-            proc_table.add_column("User", style=DIM, width=12)
-            proc_table.add_column("RAM", justify="right", style=WARN, width=10)
-            proc_table.add_column("CPU%", justify="right", style=ACCENT, width=7)
-            proc_table.add_column("Status", justify="center", width=10)
-            
-            for p in top_procs:
-                mem_info = p['memory_info']
-                ram = bytes_to_human(mem_info.rss) if mem_info else "N/A"
-                status = p['status'] or "?"
-                status_color = SUCCESS if status == "running" else DIM
-                proc_table.add_row(
-                    str(p['pid']),
-                    (p['name'] or "?")[:20],
-                    (p['username'] or "?")[:12],
-                    ram,
-                    f"{p['cpu_percent']:.1f}",
-                    f"[{status_color}]{status}[/]"
-                )
-            
-            # Docker containers panel
-            docker_title = f"[{TITLE_STYLE}] Docker Containers (Live)" if docker_stats else f"[{TITLE_STYLE}] Docker Containers (none running)"
-            docker_table = Table(box=box.ROUNDED, border_style="blue", expand=True, title=docker_title, title_style=f"bold blue")
-            docker_table.add_column("Container", style="bold", width=20)
-            docker_table.add_column("CPU%", justify="right", style=ACCENT, width=7)
-            docker_table.add_column("RAM", justify="right", style=WARN, width=10)
-            docker_table.add_column("RAM%", justify="right", width=7)
-            docker_table.add_column("Net I/O", style=DIM, width=15)
-            
-            if docker_stats:
-                for s in docker_stats:
-                    name = s.get("Name", "?")[:20]
-                    cpu_pct = s.get("CPUPerc", "0%")
-                    mem_usage = s.get("MemUsage", "? / ?")
-                    mem_perc = s.get("MemPerc", "0%")
-                    net_io = s.get("NetIO", "?")
-                    
-                    # Parse mem_usage to get just the used amount
-                    mem_used = mem_usage.split("/")[0].strip() if "/" in mem_usage else mem_usage
-                    
-                    cpu_val = float(cpu_pct.replace("%", "")) if "%" in cpu_pct else 0
-                    cpu_c = DANGER if cpu_val > 80 else WARN if cpu_val > 40 else ACCENT
-                    mem_pct_val = float(mem_perc.replace("%", "")) if "%" in mem_perc else 0
-                    mem_c = DANGER if mem_pct_val > 80 else WARN if mem_pct_val > 50 else SUCCESS
-                    
-                    docker_table.add_row(
-                        name,
-                        f"[{cpu_c}]{cpu_pct}[/]",
-                        f"[{mem_c}]{mem_used}[/]",
-                        f"[{mem_c}]{mem_perc}[/]",
-                        net_io[:15] if len(net_io) > 15 else net_io
-                    )
-            else:
-                docker_table.add_row("", "", "", "", "")
-            
-            # Combine into layout
-            from rich.layout import Layout
-            layout = Layout()
-            layout.split_column(
-                Layout(Panel(sys_table, title=f"[{TITLE_STYLE}] System Overview", border_style=ACCENT), size=10),
-                Layout(proc_table, ratio=2),
-                Layout(docker_table, ratio=2),
-                Layout(Panel(f"[{DIM}]Press [bold]q[/] to return to main menu[/]", box=box.SIMPLE), size=3)
+
+    if not RUNTIME:
+        console.print(f"[{WARN}]No container runtime detected. Container stats unavailable.[/]")
+
+    layout = Layout()
+    layout.split_column(
+        Layout(name="overview", size=10),
+        Layout(name="procs", ratio=2),
+        Layout(name="containers", ratio=2),
+        Layout(name="footer", size=3),
+    )
+
+    def build_layout():
+        mem = psutil.virtual_memory()
+        cpu = psutil.cpu_percent(interval=0.3)
+        swap = psutil.swap_memory()
+
+        cpu_color = DANGER if cpu > 80 else WARN if cpu > 50 else SUCCESS
+        ram_color = DANGER if mem.percent > 85 else WARN if mem.percent > 60 else SUCCESS
+
+        sys_table = Table(box=box.ROUNDED, border_style=ACCENT, expand=True, show_header=False)
+        sys_table.add_column("Metric", style="bold", width=18)
+        sys_table.add_column("Value")
+        sys_table.add_row("CPU", f"[{cpu_color}]{cpu:.1f}%[/]")
+        sys_table.add_row("RAM Used", f"[{ram_color}]{bytes_to_human(mem.used)} / {bytes_to_human(mem.total)} ({mem.percent:.1f}%)[/]")
+        sys_table.add_row("RAM Free", f"[{SUCCESS}]{bytes_to_human(mem.available)}[/]")
+        sys_table.add_row("Swap", f"[{WARN}]{bytes_to_human(swap.used)} / {bytes_to_human(swap.total)}[/]")
+        sys_table.add_row("Updated", f"[{DIM}]{datetime.now().strftime('%H:%M:%S')}[/]")
+
+        top_procs = []
+        for p in psutil.process_iter(['pid', 'name', 'username', 'memory_info', 'cpu_percent', 'status']):
+            try:
+                info = p.info
+                if info['memory_info']:
+                    top_procs.append(info)
+            except Exception:
+                pass
+        top_procs.sort(key=lambda x: x['memory_info'].rss if x['memory_info'] else 0, reverse=True)
+        top_procs = top_procs[:8]
+
+        proc_table = Table(
+            box=box.ROUNDED, border_style=SUCCESS, expand=True,
+            title=f"[{TITLE_STYLE}] Top Processes (by RAM)", title_style=f"bold {SUCCESS}"
+        )
+        proc_table.add_column("PID", style="dim", width=6)
+        proc_table.add_column("Name", style="bold", width=20)
+        proc_table.add_column("User", style=DIM, width=12)
+        proc_table.add_column("RAM", justify="right", style=WARN, width=10)
+        proc_table.add_column("CPU%", justify="right", style=ACCENT, width=7)
+        proc_table.add_column("Status", justify="center", width=10)
+
+        for p in top_procs:
+            mem_info = p['memory_info']
+            ram = bytes_to_human(mem_info.rss) if mem_info else "N/A"
+            status = p.get('status') or "?"
+            status_color = SUCCESS if status == "running" else DIM
+            cpu_val = p.get('cpu_percent') or 0.0
+            proc_table.add_row(
+                str(p['pid']),
+                (p['name'] or "?")[:20],
+                (p['username'] or "?")[:12],
+                ram,
+                f"{cpu_val:.1f}",
+                f"[{status_color}]{status}[/]"
             )
-            
-            console.print(layout)
-            
-            # Move cursor up and wait
-            from rich.cursor import hide_cursor
-            time.sleep(0.8)
-            
+
+        container_stats = []
+        if RUNTIME:
+            raw = run(rt("stats --no-stream --format '{{json .}}'"))
+            if raw:
+                for line in raw.splitlines():
+                    try:
+                        container_stats.append(json.loads(line))
+                    except Exception:
+                        pass
+
+        rt_label = RUNTIME_LABEL or "Container"
+        ct_color = RUNTIME_COLOR or "blue"
+        ct_title = (
+            f"[{TITLE_STYLE}] {rt_label} Containers (Live)"
+            if container_stats
+            else f"[{TITLE_STYLE}] {rt_label} Containers (none running)"
+        )
+        container_table = Table(
+            box=box.ROUNDED, border_style=ct_color, expand=True,
+            title=ct_title, title_style=f"bold {ct_color}"
+        )
+        container_table.add_column("Container", style="bold", width=20)
+        container_table.add_column("CPU%", justify="right", style=ACCENT, width=7)
+        container_table.add_column("RAM", justify="right", style=WARN, width=10)
+        container_table.add_column("RAM%", justify="right", width=7)
+        container_table.add_column("Net I/O", style=DIM, width=15)
+
+        if container_stats:
+            for s in container_stats:
+                name = s.get("Name", "?")[:20]
+                cpu_pct = s.get("CPUPerc", "0%")
+                mem_usage = s.get("MemUsage", "? / ?")
+                mem_perc = s.get("MemPerc", "0%")
+                net_io = s.get("NetIO", "?")
+                mem_used = mem_usage.split("/")[0].strip() if "/" in mem_usage else mem_usage
+                cpu_val = float(cpu_pct.replace("%", "")) if "%" in cpu_pct else 0
+                cpu_c = DANGER if cpu_val > 80 else WARN if cpu_val > 40 else ACCENT
+                mem_pct_val = float(mem_perc.replace("%", "")) if "%" in mem_perc else 0
+                mem_c = DANGER if mem_pct_val > 80 else WARN if mem_pct_val > 50 else SUCCESS
+                container_table.add_row(
+                    name,
+                    f"[{cpu_c}]{cpu_pct}[/]",
+                    f"[{mem_c}]{mem_used}[/]",
+                    f"[{mem_c}]{mem_perc}[/]",
+                    net_io[:15] if len(net_io) > 15 else net_io
+                )
+        else:
+            container_table.add_row("—", "—", "—", "—", "—")
+
+        layout["overview"].update(Panel(sys_table, title=f"[{TITLE_STYLE}] System Overview", border_style=ACCENT))
+        layout["procs"].update(proc_table)
+        layout["containers"].update(container_table)
+        layout["footer"].update(Panel(
+            f"[{DIM}]Press [bold]q[/] to return to main menu[/]",
+            box=box.SIMPLE
+        ))
+        return layout
+
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        with Live(build_layout(), screen=True, refresh_per_second=LIVE_REFRESH_RATE) as live:
+            while True:
+                if select.select([sys.stdin], [], [], LIVE_INPUT_TIMEOUT)[0]:
+                    ch = sys.stdin.read(1)
+                    if ch.lower() in ('q', CTRL_C):
+                        break
+                live.update(build_layout())
     except KeyboardInterrupt:
         pass
     except Exception as e:
-        console.print(f"[{DANGER}]Error: {e}[/]")
+        console.print(f"[{DANGER}]Error in live monitor: {e}[/]")
         input_pause()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
 # ─── CADDY MANAGER ────────────────────────────────────────────────────────────
@@ -812,10 +837,12 @@ def remove_caddy_block(content, domain_to_remove):
     depth = 0
     for line in lines:
         stripped = line.strip()
-        if domain_to_remove in stripped and stripped.endswith("{") and not skip:
-            skip = True
-            depth = 1
-            continue
+        if not skip and stripped.endswith("{"):
+            site_label = stripped.rstrip("{").strip()
+            if site_label == domain_to_remove:
+                skip = True
+                depth = 1
+                continue
         if skip:
             if stripped.endswith("{"):
                 depth += 1
